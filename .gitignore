@@ -1,0 +1,10 @@
+# Build output
+dist/
+.module-cache/
+
+# macOS metadata
+.DS_Store
+
+# Local Codex account state
+.codex/
+auth.json
