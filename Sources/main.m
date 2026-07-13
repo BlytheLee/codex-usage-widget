@@ -197,8 +197,11 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
 
         NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
         NSDictionary *rateLimit = [payload isKindOfClass:[NSDictionary class]] ? payload[@"rate_limit"] : nil;
-        NSDictionary *fiveHour = rateLimit[@"primary_window"];
-        NSDictionary *weekly = rateLimit[@"secondary_window"];
+        NSDictionary *primary = rateLimit[@"primary_window"];
+        NSDictionary *secondary = rateLimit[@"secondary_window"];
+        BOOL hasFiveHour = [self isValidLimitWindow:primary] && [self isValidLimitWindow:secondary];
+        NSDictionary *fiveHour = hasFiveHour ? primary : nil;
+        NSDictionary *weekly = hasFiveHour ? secondary : primary;
         if (![self isValidLimitWindow:weekly]) {
             dispatch_async(dispatch_get_main_queue(), ^{ [self showError:@"未收到可展示的额度数据"]; });
             return;
@@ -209,7 +212,6 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
             NSHTTPURLResponse *creditsHTTP = (NSHTTPURLResponse *)creditsResponse;
             NSDictionary *credits = (!creditsError && creditsHTTP.statusCode >= 200 && creditsHTTP.statusCode < 300) ? [NSJSONSerialization JSONObjectWithData:creditsData options:0 error:nil] : nil;
             dispatch_async(dispatch_get_main_queue(), ^{
-                BOOL hasFiveHour = [self isValidLimitWindow:fiveHour];
                 self.fiveHourItem.hidden = !hasFiveHour;
                 if (hasFiveHour) {
                     self.fiveHourItem.title = [self titleForLimit:fiveHour label:@"五小时额度"];
