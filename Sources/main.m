@@ -255,8 +255,11 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
 
     NSDate *expiresAt = [self dateFromISO8601:self.soonestResetCredit[@"expires_at"]];
     NSTimeInterval hours = expiresAt ? MAX(0, ceil([expiresAt timeIntervalSinceNow] / 3600.0)) : 0;
-    if (hours <= 24) {
-        self.resetCreditItem.title = [NSString stringWithFormat:@"提醒：赠送重置将在约 %.0f 小时后到期", hours];
+    if (expiresAt && hours <= 24) {
+        NSDateFormatter *formatter = [NSDateFormatter new];
+        formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"zh_CN"];
+        formatter.dateFormat = @"M月dd日";
+        self.resetCreditItem.title = [NSString stringWithFormat:@"提醒：重置最早到期时间%@", [formatter stringFromDate:expiresAt]];
         self.useResetItem.hidden = NO;
         self.useResetItem.enabled = YES;
     } else {
