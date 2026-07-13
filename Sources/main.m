@@ -167,10 +167,10 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
 
 - (NSString *)descriptionForActivity:(CodexActivity)activity {
     switch (activity) {
-        case CodexActivityTaskRunning: return @"任务活动 · 每 30 秒";
-        case CodexActivityForegroundIdle: return @"客户端前台 · 每 1 分钟";
-        case CodexActivityBackgroundIdle: return @"客户端后台 · 每 10 分钟";
-        case CodexActivityClosed: return @"客户端已关闭 · 每 5 小时";
+        case CodexActivityTaskRunning: return @"任务进行中，30s更新一次";
+        case CodexActivityForegroundIdle: return @"客户端前台运行中，1分钟更新一次";
+        case CodexActivityBackgroundIdle: return @"客户端后台运行中，10分钟更新一次";
+        case CodexActivityClosed: return @"客户端已关闭，5小时更新一次";
     }
 }
 
