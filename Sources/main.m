@@ -351,6 +351,10 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
 - (NSDate *)dateFromISO8601:(NSString *)value {
     if (![value isKindOfClass:[NSString class]]) return nil;
     NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
+    NSDate *date = [formatter dateFromString:value];
+    if (date) return date;
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
     return [formatter dateFromString:value];
 }
 
