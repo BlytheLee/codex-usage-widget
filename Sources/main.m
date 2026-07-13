@@ -20,6 +20,7 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
 @property(nonatomic, retain) NSMenuItem *weeklyItem;
 @property(nonatomic, retain) NSMenuItem *resetCreditItem;
 @property(nonatomic, retain) NSMenuItem *useResetItem;
+@property(nonatomic, retain) NSMenuItem *resetModuleLeadingSeparator;
 @property(nonatomic, retain) NSMenuItem *statusItemInMenu;
 @property(nonatomic, retain) NSMenuItem *syncPolicyItem;
 @property(nonatomic, retain) NSDictionary *soonestResetCredit;
@@ -50,7 +51,8 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItem:self.fiveHourItem];
     [menu addItem:self.weeklyItem];
-    [menu addItem:[NSMenuItem separatorItem]];
+    self.resetModuleLeadingSeparator = [NSMenuItem separatorItem];
+    [menu addItem:self.resetModuleLeadingSeparator];
     [menu addItem:self.resetCreditItem];
     [menu addItem:self.useResetItem];
     [menu addItem:[NSMenuItem separatorItem]];
@@ -248,24 +250,21 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
 
     self.soonestResetCredit = available.firstObject;
     if (!self.soonestResetCredit) {
-        self.resetCreditItem.title = @"赠送重置：无可用次数";
+        self.resetModuleLeadingSeparator.hidden = YES;
+        self.resetCreditItem.hidden = YES;
         self.useResetItem.hidden = YES;
         return;
     }
 
     NSDate *expiresAt = [self dateFromISO8601:self.soonestResetCredit[@"expires_at"]];
-    NSTimeInterval hours = expiresAt ? MAX(0, ceil([expiresAt timeIntervalSinceNow] / 3600.0)) : 0;
-    if (expiresAt && hours <= 24) {
-        NSDateFormatter *formatter = [NSDateFormatter new];
-        formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"zh_CN"];
-        formatter.dateFormat = @"M月dd日";
-        self.resetCreditItem.title = [NSString stringWithFormat:@"提醒：重置最早到期时间%@", [formatter stringFromDate:expiresAt]];
-        self.useResetItem.hidden = NO;
-        self.useResetItem.enabled = YES;
-    } else {
-        self.resetCreditItem.title = [NSString stringWithFormat:@"赠送重置：%lu 次可用 · 最近约 %.0f 小时后到期", (unsigned long)available.count, hours];
-        self.useResetItem.hidden = YES;
-    }
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"zh_CN"];
+    formatter.dateFormat = @"M月dd日";
+    self.resetModuleLeadingSeparator.hidden = NO;
+    self.resetCreditItem.hidden = NO;
+    self.resetCreditItem.title = expiresAt ? [NSString stringWithFormat:@"重置最早到期时间%@", [formatter stringFromDate:expiresAt]] : @"重置最早到期时间未知";
+    self.useResetItem.hidden = NO;
+    self.useResetItem.enabled = YES;
 }
 
 - (void)confirmAndConsumeReset:(id)sender {
