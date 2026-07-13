@@ -11,6 +11,7 @@ cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 clang "$ROOT/Sources/main.m" \
   -o "$MACOS/Codex Usage" \
   -fmodules-cache-path="$ROOT/.module-cache" \
-  -framework Cocoa
+  -framework Cocoa \
+  -framework CoreServices
 
 echo "Built: $APP"

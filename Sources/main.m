@@ -1,8 +1,18 @@
 #import <Cocoa/Cocoa.h>
+#import <CoreServices/CoreServices.h>
 
 static NSString *const UsageURL = @"https://chatgpt.com/backend-api/wham/usage";
 static NSString *const ResetCreditsURL = @"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
+
+typedef NS_ENUM(NSInteger, CodexActivity) {
+    CodexActivityTaskRunning,
+    CodexActivityForegroundIdle,
+    CodexActivityBackgroundIdle,
+    CodexActivityClosed,
+};
+
+static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientCallBackInfo, size_t numEvents, void *eventPaths, const FSEventStreamEventFlags eventFlags[], const FSEventStreamEventId eventIds[]);
 
 @interface UsageAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
 @property(nonatomic, retain) NSStatusItem *statusItem;
@@ -11,7 +21,11 @@ static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/
 @property(nonatomic, retain) NSMenuItem *resetCreditItem;
 @property(nonatomic, retain) NSMenuItem *useResetItem;
 @property(nonatomic, retain) NSMenuItem *statusItemInMenu;
+@property(nonatomic, retain) NSMenuItem *syncPolicyItem;
 @property(nonatomic, retain) NSDictionary *soonestResetCredit;
+@property(nonatomic, retain) NSTimer *refreshTimer;
+@property(nonatomic, retain) NSDate *lastRefreshStartedAt;
+@property(nonatomic) FSEventStreamRef sessionEvents;
 @property(nonatomic) BOOL isRefreshing;
 @end
 
@@ -44,7 +58,8 @@ static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/
     NSMenuItem *refreshItem = [[NSMenuItem alloc] initWithTitle:@"刷新" action:@selector(refresh:) keyEquivalent:@"r"];
     refreshItem.target = self;
     [menu addItem:refreshItem];
-    [menu addItem:[self disabledItem:@"打开菜单时立即刷新 · 每 60 秒同步"]];
+    self.syncPolicyItem = [self disabledItem:@"同步策略：正在判断 Codex 状态…"];
+    [menu addItem:self.syncPolicyItem];
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"退出 Codex Usage" action:@selector(terminate:) keyEquivalent:@"q"];
@@ -52,8 +67,10 @@ static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/
     [menu addItem:quitItem];
 
     self.statusItem.menu = menu;
+    [self observeCodexApplication];
+    [self observeSessionWrites];
+    [self scheduleNextRefresh];
     [self refresh:nil];
-    [NSTimer scheduledTimerWithTimeInterval:60 target:self selector:@selector(refresh:) userInfo:nil repeats:YES];
 }
 
 - (NSMenuItem *)disabledItem:(NSString *)title {
@@ -66,9 +83,101 @@ static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/
     [self refresh:nil];
 }
 
+- (void)observeCodexApplication {
+    NSNotificationCenter *workspaceNotifications = NSWorkspace.sharedWorkspace.notificationCenter;
+    for (NSNotificationName name in @[
+        NSWorkspaceDidLaunchApplicationNotification,
+        NSWorkspaceDidTerminateApplicationNotification,
+        NSWorkspaceDidActivateApplicationNotification,
+        NSWorkspaceDidDeactivateApplicationNotification
+    ]) {
+        [workspaceNotifications addObserver:self selector:@selector(codexApplicationChanged:) name:name object:nil];
+    }
+}
+
+- (void)codexApplicationChanged:(NSNotification *)notification {
+    NSRunningApplication *application = notification.userInfo[NSWorkspaceApplicationKey];
+    if ([application.bundleIdentifier isEqualToString:@"com.openai.codex"]) {
+        [self refresh:nil];
+    }
+}
+
+- (void)observeSessionWrites {
+    NSString *sessionsPath = [NSHomeDirectory() stringByAppendingPathComponent:@".codex/sessions"];
+    FSEventStreamContext context = {0, self, NULL, NULL, NULL};
+    self.sessionEvents = FSEventStreamCreate(NULL, SessionEventsCallback, &context, (__bridge CFArrayRef)@[sessionsPath], kFSEventStreamEventIdSinceNow, 1.0, kFSEventStreamCreateFlagFileEvents);
+    FSEventStreamSetDispatchQueue(self.sessionEvents, dispatch_get_main_queue());
+    FSEventStreamStart(self.sessionEvents);
+}
+
+- (void)sessionFilesChanged {
+    if ([self currentActivity] == CodexActivityTaskRunning) {
+        if (!self.lastRefreshStartedAt || -[self.lastRefreshStartedAt timeIntervalSinceNow] >= 30) {
+            [self refresh:nil];
+        } else {
+            [self scheduleNextRefresh];
+        }
+    }
+}
+
+- (void)scheduleNextRefresh {
+    CodexActivity activity = [self currentActivity];
+    NSTimeInterval interval = [self refreshIntervalForActivity:activity];
+    [self.refreshTimer invalidate];
+    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:interval target:self selector:@selector(refresh:) userInfo:nil repeats:NO];
+    self.syncPolicyItem.title = [NSString stringWithFormat:@"同步策略：%@", [self descriptionForActivity:activity]];
+}
+
+- (CodexActivity)currentActivity {
+    NSRunningApplication *codex = nil;
+    for (NSRunningApplication *application in NSWorkspace.sharedWorkspace.runningApplications) {
+        if ([application.bundleIdentifier isEqualToString:@"com.openai.codex"]) {
+            codex = application;
+            break;
+        }
+    }
+    if (!codex) return CodexActivityClosed;
+    if ([self hasRecentSessionWrite]) return CodexActivityTaskRunning;
+    return codex.active ? CodexActivityForegroundIdle : CodexActivityBackgroundIdle;
+}
+
+- (BOOL)hasRecentSessionWrite {
+    NSURL *sessionsURL = [[NSFileManager defaultManager].homeDirectoryForCurrentUser URLByAppendingPathComponent:@".codex/sessions"];
+    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtURL:sessionsURL includingPropertiesForKeys:@[NSURLContentModificationDateKey, NSURLIsRegularFileKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:nil];
+    NSDate *threshold = [NSDate dateWithTimeIntervalSinceNow:-90];
+    for (NSURL *url in enumerator) {
+        NSNumber *isRegularFile = nil;
+        NSDate *modifiedAt = nil;
+        [url getResourceValue:&isRegularFile forKey:NSURLIsRegularFileKey error:nil];
+        if (!isRegularFile.boolValue) continue;
+        [url getResourceValue:&modifiedAt forKey:NSURLContentModificationDateKey error:nil];
+        if ([modifiedAt compare:threshold] == NSOrderedDescending) return YES;
+    }
+    return NO;
+}
+
+- (NSTimeInterval)refreshIntervalForActivity:(CodexActivity)activity {
+    switch (activity) {
+        case CodexActivityTaskRunning: return 30;
+        case CodexActivityForegroundIdle: return 60;
+        case CodexActivityBackgroundIdle: return 600;
+        case CodexActivityClosed: return 18000;
+    }
+}
+
+- (NSString *)descriptionForActivity:(CodexActivity)activity {
+    switch (activity) {
+        case CodexActivityTaskRunning: return @"任务活动 · 每 30 秒";
+        case CodexActivityForegroundIdle: return @"客户端前台 · 每 1 分钟";
+        case CodexActivityBackgroundIdle: return @"客户端后台 · 每 10 分钟";
+        case CodexActivityClosed: return @"客户端已关闭 · 每 5 小时";
+    }
+}
+
 - (void)refresh:(id)sender {
     if (self.isRefreshing) return;
     self.isRefreshing = YES;
+    self.lastRefreshStartedAt = [NSDate date];
     self.statusItemInMenu.title = @"正在同步…";
 
     NSError *error = nil;
@@ -106,6 +215,7 @@ static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/
                 NSInteger remaining = MAX(0, MIN(100, 100 - used.integerValue));
                 self.statusItem.button.title = [NSString stringWithFormat:@"Codex %ld%%", (long)remaining];
                 [self updateResetCredits:credits];
+                [self scheduleNextRefresh];
                 self.statusItemInMenu.title = [NSString stringWithFormat:@"已同步 · %@", [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle]];
                 self.isRefreshing = NO;
             });
@@ -240,6 +350,7 @@ static NSString *const ConsumeResetURL = @"https://chatgpt.com/backend-api/wham/
     self.statusItem.button.title = @"Codex !";
     self.statusItemInMenu.title = message;
     self.isRefreshing = NO;
+    [self scheduleNextRefresh];
 }
 
 @end
@@ -251,4 +362,11 @@ int main(int argc, const char * argv[]) {
         [application run];
     }
     return 0;
+}
+
+static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientCallBackInfo, size_t numEvents, void *eventPaths, const FSEventStreamEventFlags eventFlags[], const FSEventStreamEventId eventIds[]) {
+    UsageAppDelegate *delegate = (UsageAppDelegate *)clientCallBackInfo;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [delegate sessionFilesChanged];
+    });
 }
