@@ -199,7 +199,7 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
         NSDictionary *rateLimit = [payload isKindOfClass:[NSDictionary class]] ? payload[@"rate_limit"] : nil;
         NSDictionary *fiveHour = rateLimit[@"primary_window"];
         NSDictionary *weekly = rateLimit[@"secondary_window"];
-        if (![fiveHour isKindOfClass:[NSDictionary class]] || ![weekly isKindOfClass:[NSDictionary class]]) {
+        if (![self isValidLimitWindow:weekly]) {
             dispatch_async(dispatch_get_main_queue(), ^{ [self showError:@"未收到可展示的额度数据"]; });
             return;
         }
@@ -209,11 +209,15 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
             NSHTTPURLResponse *creditsHTTP = (NSHTTPURLResponse *)creditsResponse;
             NSDictionary *credits = (!creditsError && creditsHTTP.statusCode >= 200 && creditsHTTP.statusCode < 300) ? [NSJSONSerialization JSONObjectWithData:creditsData options:0 error:nil] : nil;
             dispatch_async(dispatch_get_main_queue(), ^{
-                self.fiveHourItem.title = [self titleForLimit:fiveHour label:@"五小时额度"];
+                BOOL hasFiveHour = [self isValidLimitWindow:fiveHour];
+                self.fiveHourItem.hidden = !hasFiveHour;
+                if (hasFiveHour) {
+                    self.fiveHourItem.title = [self titleForLimit:fiveHour label:@"五小时额度"];
+                }
                 self.weeklyItem.title = [self titleForLimit:weekly label:@"周额度"];
-                NSNumber *used = fiveHour[@"used_percent"];
+                NSNumber *used = hasFiveHour ? fiveHour[@"used_percent"] : weekly[@"used_percent"];
                 NSInteger remaining = MAX(0, MIN(100, 100 - used.integerValue));
-                self.statusItem.button.title = [NSString stringWithFormat:@"Codex %ld%%", (long)remaining];
+                self.statusItem.button.title = hasFiveHour ? [NSString stringWithFormat:@"Codex %ld%%", (long)remaining] : [NSString stringWithFormat:@"Codex 周 %ld%%", (long)remaining];
                 [self updateResetCredits:credits];
                 [self scheduleNextRefresh];
                 self.statusItemInMenu.title = [NSString stringWithFormat:@"已同步 · %@", [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle]];
@@ -221,6 +225,11 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
             });
         }] resume];
     }] resume];
+}
+
+- (BOOL)isValidLimitWindow:(NSDictionary *)window {
+    if (![window isKindOfClass:[NSDictionary class]] || ![window[@"used_percent"] isKindOfClass:[NSNumber class]]) return NO;
+    return [window[@"reset_at"] isKindOfClass:[NSNumber class]] || [window[@"reset_after_seconds"] isKindOfClass:[NSNumber class]];
 }
 
 - (void)updateResetCredits:(NSDictionary *)payload {
