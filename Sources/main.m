@@ -41,8 +41,8 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
     menu.delegate = self;
     self.statusItemInMenu = [self disabledItem:@"正在读取本机 Codex 额度…"];
     self.fiveHourItem = [self disabledItem:@"五小时额度：暂无数据"];
-    self.weeklyItem = [self disabledItem:@"周额度：暂无数据"];
-    self.resetCreditItem = [self disabledItem:@"赠送重置：暂无数据"];
+    self.weeklyItem = [self disabledItem:@"剩余额度：暂无数据"];
+    self.resetCreditItem = [self disabledItem:@"主动重置机会：暂无数据"];
     self.useResetItem = [[NSMenuItem alloc] initWithTitle:@"使用重置" action:@selector(confirmAndConsumeReset:) keyEquivalent:@""];
     self.useResetItem.target = self;
     self.useResetItem.hidden = YES;
@@ -218,10 +218,10 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
                 if (hasFiveHour) {
                     self.fiveHourItem.title = [self titleForLimit:fiveHour label:@"五小时额度"];
                 }
-                self.weeklyItem.title = [self titleForLimit:weekly label:@"周额度"];
+                self.weeklyItem.title = [self titleForLimit:weekly label:@"剩余额度"];
                 NSNumber *used = hasFiveHour ? fiveHour[@"used_percent"] : weekly[@"used_percent"];
                 NSInteger remaining = MAX(0, MIN(100, 100 - used.integerValue));
-                self.statusItem.button.title = hasFiveHour ? [NSString stringWithFormat:@"Codex %ld%%", (long)remaining] : [NSString stringWithFormat:@"Codex 周 %ld%%", (long)remaining];
+                self.statusItem.button.title = [NSString stringWithFormat:@"Codex 剩 %ld%%", (long)remaining];
                 [self updateResetCredits:credits];
                 [self scheduleNextRefresh];
                 self.statusItemInMenu.title = [NSString stringWithFormat:@"已同步 · %@", [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle]];
@@ -259,10 +259,10 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
     NSDate *expiresAt = [self dateFromISO8601:self.soonestResetCredit[@"expires_at"]];
     NSDateFormatter *formatter = [NSDateFormatter new];
     formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"zh_CN"];
-    formatter.dateFormat = @"M月dd日";
+    formatter.dateFormat = @"M月d日";
     self.resetModuleLeadingSeparator.hidden = NO;
     self.resetCreditItem.hidden = NO;
-    self.resetCreditItem.title = expiresAt ? [NSString stringWithFormat:@"重置最早到期时间%@", [formatter stringFromDate:expiresAt]] : @"重置最早到期时间未知";
+    self.resetCreditItem.title = expiresAt ? [NSString stringWithFormat:@"主动重置机会最早到期时间%@", [formatter stringFromDate:expiresAt]] : @"主动重置机会最早到期时间未知";
     self.useResetItem.hidden = NO;
     self.useResetItem.enabled = YES;
 }
@@ -343,9 +343,8 @@ static void SessionEventsCallback(ConstFSEventStreamRef streamRef, void *clientC
     NSInteger seconds = MAX(0, (NSInteger)(reset - NSDate.date.timeIntervalSince1970));
     NSInteger days = seconds / 86400;
     NSInteger hours = (seconds % 86400) / 3600;
-    NSInteger minutes = (seconds % 3600) / 60;
-    NSString *countdown = days > 0 ? [NSString stringWithFormat:@"%ld 天 %ld 小时", (long)days, (long)hours] : (hours > 0 ? [NSString stringWithFormat:@"%ld 小时 %ld 分钟", (long)hours, (long)minutes] : [NSString stringWithFormat:@"%ld 分钟", (long)minutes]);
-    return [NSString stringWithFormat:@"%@：%ld%% 剩余 · %@ 后重置", label, (long)remaining, countdown];
+    NSString *countdown = days > 0 ? [NSString stringWithFormat:@"%ld天%ld小时", (long)days, (long)hours] : [NSString stringWithFormat:@"%ld小时", (long)MAX(1, (seconds + 3599) / 3600)];
+    return [NSString stringWithFormat:@"%@：%ld%%，%@后重置", label, (long)remaining, countdown];
 }
 
 - (NSDate *)dateFromISO8601:(NSString *)value {
